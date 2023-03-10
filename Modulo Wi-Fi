@@ -1,0 +1,125 @@
+#include <ArduinoJson.h>
+#include <ESP8266WiFi.h>     //------------
+#include <ESP8266HTTPClient.h> //------------
+#include <Separador.h>         //------------
+#include <SoftwareSerial.h>    //------------
+
+const char* ssid = "POCO X3 Pro"; // Nombre de red Wi-Fi
+const char* password = "123456789"; // Contraseña de la red Wi-Fi
+const char* serverName = "https://kmf7eub7se.execute-api.us-west-1.amazonaws.com"; // URL de la API de AWS
+unsigned long lastTime = 0;
+unsigned long timerDelay = 5000;
+WiFiClientSecure client;
+HTTPClient http;
+
+// --------------------------------------
+
+char *append_str(char *here, String s) 
+{ 
+    int i=0; while (*here++ = s[i])
+    {
+      i++;
+    };
+    return here-1;
+}
+
+char *append_ul(char *here, unsigned long u) 
+{ 
+    char buf[20]; 
+    return append_str(here, ultoa(u, buf, 10));
+}
+
+bool iterar = true;
+char post_rqst[256];
+char *p;
+char *content_length_here;
+char *json_start;
+int compi;
+SoftwareSerial mySerial(13,15);
+String estado;
+String MakerIFTTT_Key;
+String MakerIFTTT_Event;
+
+String elemento1, elemento2,elemento3, elemento4, elemento5, elemento6, elemento7;
+#define DEBUG(a) Serial.println(a);
+Separador s;
+
+// --------------------------------------
+
+void setup() {
+  mySerial.begin(9600);
+  Serial.begin(9600);
+
+  WiFi.begin(ssid, password);
+  Serial.println("Conectando");
+  while(WiFi.status() != WL_CONNECTED) {
+    delay(10000);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.print("Conectado a la red Wi-Fi con dirección IP: ");
+  Serial.println(WiFi.localIP());
+ 
+  Serial.println("El temporizador está configurado para 5 segundos (variable timerDelay), se tardará 5 segundos antes de enviar la primera lectura.");
+}
+
+void loop() {
+  // Enviar una solicitud HTTP POST cada 10 minutos
+  if ((millis() - lastTime) > timerDelay) {
+    // Comprobar el estado de conexión Wi-Fi
+    if(WiFi.status()== WL_CONNECTED){
+      HTTPClient http;
+      
+      
+      client.setInsecure();
+http.begin(client, serverName);
+      while (iterar){
+        if (mySerial.available()){
+          // Almaceno el carácter que llega por el puerto serie (RX)
+          estado = mySerial.readStringUntil('\n');
+          DEBUG(estado);
+          //Serial.println(estado);
+          elemento1 = s.separa(estado, ',',0);
+          elemento2 = s.separa(estado, ',',1);
+          elemento3 = s.separa(estado, ',',2);
+          elemento4 = s.separa(estado, ',',3);
+          elemento5 = s.separa(estado, ',',4);
+          elemento6 = s.separa(estado, ',',5);
+          elemento7 = s.separa(estado, ',',6);
+
+          Serial.println("Valor 1:"+elemento1);
+          Serial.println("Valor 2:"+elemento2);
+          Serial.println("Valor 3:"+elemento3);
+          Serial.println("Valor 4:"+elemento4);
+          Serial.println("Valor 5:"+elemento5);
+          Serial.println("Valor 6:"+elemento6);
+          Serial.println("Valor 7:"+elemento7);
+        }
+        else{
+              estado="No hay datos";
+        }
+       String payload = "{\"OXDIX\": \"" + elemento4 + "\",\"TEMP\": \"" + elemento3 + "\",\"SAL\": \"" + elemento2 + "\",\"PH\": \"" + elemento1 + "\",\"TURBIDEZ\": \"" + elemento5 + "\",\"TDS\": \"" + elemento2 + "\",\"LLUVIA\": \"" + elemento6 + "\",\"NIVEL\": \"" + elemento7 + "\"}";
+Serial.println(payload);
+http.begin(client, (String(serverName) + "/camaronAddValores").c_str());
+http.addHeader("Content-Type", "application/json"); // Agrega cabecera
+int httpResponseCode = http.POST(payload); // Cambia a método POST
+if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println("Respuesta del servidor:");
+    Serial.println(response);
+} else {
+    Serial.print("Error en la solicitud HTTP: ");
+    Serial.println(httpResponseCode);
+}
+//http.end(); ----------------
+//delay(10000); -------------------------------
+
+      }
+      // Liberar recursos
+      http.end();
+      delay(10000);
+    }
+    
+    lastTime = millis();
+  }
+}
