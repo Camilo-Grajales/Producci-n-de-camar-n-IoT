@@ -1,0 +1,282 @@
+#include <OneWire.h>    // Comunicación con dispositivos con protocolo OneWire
+#include <DallasTemperature.h> // Medición temperatura sensor DS18B20 
+#include <SoftwareSerial.h>    // Permite comunicación serie a través de pines digitales de Arduino
+#include <LiquidCrystal.h>     // Para control de display LCD
+#include <Arduino.h>           // Proporciona funciones para interactuar con la placa Arduino
+
+LiquidCrystal lcd(7, 6, 5, 4, 3, 2);   //establece un objeto "lcd" de la clase "LiquidCrystal" y configura los pines digitales 7, 6, 5, 4, 3 y 2 para ser utilizados como conectores de un display LCD. xx
+SoftwareSerial mySerial(0,1); // Comunicación con el módulo Wi-Fi con los pines digitales 0 y 1
+
+//Creación de las variables
+
+const byte tdspin = A1; //variable de tds
+int sensorPin = A2;// variable de turbidez
+float Po, Temperatura, TdsResultado,Oxigeno, Turbidez, Salinidad;
+String pH="", tds="", temp="",oxi="", tur="", cadena, sal="", lluv="", niv="";
+int lluvia, nivel; // 0 -1023
+String LluviaS="", NivelA="";
+
+// Pin donde se conecta el bus 1-Wire
+const int pinDatosDQ = 9;
+//tds
+
+#define TdsSensorPin tdspin
+#define VREF 5.0
+#define SCOUNT 30
+
+int analogBuffer[SCOUNT];
+int analogBufferTemp[SCOUNT];
+int analogBufferIndex = 0,copyIndex= 0;
+float averageVoltage = 0,tdsValue = 0,temperature = 25, humedad=300;
+
+#define SensorPin A0
+
+unsigned long int avgValue;
+float b;
+int buf[10],tempo;
+
+#define DO_PIN A3
+#define VREF 5000
+#define ADC_RES 1024
+#define TWO_POINT_CALIBRATION 0
+#define READ_TEMP (25)
+#define CAL1_V (2099)
+#define CAL1_T (25)
+#define CAL2_V (1300)
+#define CAL2_T (15)
+
+const uint16_t DO_Table[41] = {
+    14460, 14220, 13820, 13440,
+    13090, 12740, 12420, 12110,
+    11810, 11530,11260, 11010,
+    10770, 10530,10300, 10080, 
+    9860, 9660, 9460, 9270, 9080, 
+    8900, 8730, 8570, 8410, 8250, 
+    8110, 7960, 7820, 7690, 7560, 
+    7430, 7300, 7180, 7070, 6950, 
+    6840, 6730, 6630, 6530, 6410
+};
+
+uint8_t Temperaturet;
+uint16_t ADC_Raw;
+uint16_t ADC_Voltage;
+uint16_t DO;
+int16_t readDO(uint32_t voltage_mv,uint8_t temperature_c)
+{
+    #if TWO_POINT_CALIBRATION == 00
+        uint16_t V_saturation = (uint32_t)CAL1_V + (uint32_t)35 * temperature_c - (uint32_t)CAL1_T *35;
+        return (voltage_mv *DO_Table[temperature_c] /V_saturation);
+    #else
+        uint16_t V_saturation =(int16_t)((int8_t)temperature_c -CAL2_T) * ((uint16_t)CAL1_V -CAL2_V) / ((uint8_t)CAL1_T - CAL2_T)+ CAL2_V;
+    return (voltage_mv *DO_Table[temperature_c] /V_saturation);
+    #endif
+}
+
+// Instancia a las clases OneWire yDallasTemperature
+OneWire oneWireObjeto(pinDatosDQ);
+DallasTemperature
+sensorDS18B20(&oneWireObjeto);
+
+void setup() {
+    //Inicializacion del LCD 16*2
+    lcd.begin(16, 2);
+    // Iniciamos la comunicación serie "Sensor de Temperatura y TDS"
+    Serial.begin(9600);
+    // Iniciamos el bus 1-Wire
+    mySerial.begin(9600);
+    sensorDS18B20.begin();
+    //Iniciamos el sensor tds
+    Serial.begin(115200);
+    //Iniciamos lluvia sensor
+    pinMode(TdsSensorPin,INPUT);
+}
+
+void loop() {
+    // Mandamos comandos para toma de temperatura a los sensores
+    Serial.println("Mandando comandos a los sensores");
+
+    Temperatura=ObtenerTemperatura();
+    Po = ObtenerpH(); 
+    TdsResultado = obtenerTDS();
+    analogRead(tdspin);
+    Turbidez = ObtenerTurbidez();
+    Salinidad = CalculoSalinidad(TdsResultado);
+    Oxigeno = ObtenerOD();
+    LluviaS = ObtenerLluvia();
+    NiAvelA = ObtenerNivel ();
+
+    pH= String(Po);
+    sal= String(Salinidad);
+    temp =String(Temperatura);
+    oxi = String(Oxigeno);
+    tur = String(Turbidez);
+    lluv = String(LluviaS);
+    niv = String(NivelA);
+
+    Serial.print("Oxigeno Disuelto:");
+    Serial.println(oxi);
+    EnviarDatos(pH, sal, temp, oxi, tur, lluv, niv);
+    PresentarDatosLCD(pH, sal, temp, oxi, tur, lluv, niv);
+    delay(1000);
+}
+
+//Mostrar Datos
+void PresentarDatosLCD(String pH,String tds, String temp, String o_d,String turbidez, String lluv, String niv){
+    lcd.clear();
+    String datos="Temp:"+temp+"CpH:"+pH+" Salinidad:"+tds+"pptOxigeno disuelto:"+o_d+"mg/LTurbidez:"+turbidez+;
+    String datos2=""+lluv+""+niv;
+    int longitud= datos.length();
+    Serial.print(datos);
+    Serial.print(datos2);
+    Serial.println(longitud);
+    for(int i=longitud;i>0;i--){
+        delay(225);
+        String texto =datos.substring(i-1);
+        lcd.clear();
+        lcd.setCursor(0,0);
+        lcd.print(texto);
+        lcd.setCursor(0,1);
+        lcd.print(datos2);   
+    }
+ }
+
+//Enviar Datos al módulo wifi
+void EnviarDatos(String pH, String tds, String temp, String o_d, String turbidez, String lluv, String niv){
+    cadena=pH+","+tds+","+temp+","+o_d+","+turbidez+","+lluv+","+niv+"\n";
+    char mensaje[70];
+    cadena.toCharArray(mensaje,70);
+    mySerial.write(mensaje);
+}
+
+//Obtencion de los valores
+float ObtenerpH(){
+    for(int i=0;i<10;i++) //Get 10 sample value from the sensor for smooth the value
+    {
+        buf[i]=analogRead(SensorPin);
+        delay(10);
+    }
+    
+    for(int i=0;i<9;i++) //sort the analog from small to large
+    {
+        for(int j=i+1;j<10;j++)
+        {
+            if(buf[i]>buf[j])
+            {
+                temp=buf[i];
+                buf[i]=buf[j];
+                buf[j]=tempo;
+            }
+        }
+    }
+    avgValue=0;
+    for(int i=2;i<8;i++)
+    //take the average value of 6 center sample
+    avgValue+=buf[i];
+    float phValue=(float)avgValue*3.0/1024/7;
+    //convert the analog into millivolt
+    phValue=3.5*phValue;
+    //convert the millivolt into pH value
+    Serial.print("pH:");
+    Serial.println(phValue,2);
+    return phValue;
+}
+
+float ObtenerOD(){
+    Temperaturet = (uint8_t)READ_TEMP;
+    ADC_Raw = analogRead(DO_PIN);
+    ADC_Voltage = uint32_t(VREF) * ADC_Raw / ADC_RES;
+    return readDO(ADC_Voltage,Temperaturet)/1000;
+}
+
+float ObtenerTemperatura(){
+    // Comandos para toma de temperatura a los sensores
+
+    sensorDS18B20.requestTemperatures();
+    // Leemos y mostramos los datos de los sensores DS18B20
+    Serial.print("Temperatura: ");
+    Serial.print(sensorDS18B20.getTempCByIndex(0));
+    Serial.println("°C");
+    return sensorDS18B20.getTempCByIndex(0);
+}
+
+int getMedianNum(int bArray[], int iFilterLen)
+{
+    int bTab[iFilterLen];
+    for (byte i = 0; i<iFilterLen;i++) 
+    bTab[i] = bArray[i];
+    int i, j, bTemp;
+    for (j = 0; j < iFilterLen - 1; j++)
+    {
+        for (i = 0; i < iFilterLen - j - 1; i++)
+        {
+            if (bTab[i] > bTab[i + 1])
+            {
+                bTemp = bTab[i];
+                bTab[i] = bTab[i + 1];
+                bTab[i + 1] = bTemp;
+            }
+        }
+    }
+    if ((iFilterLen & 1) > 0)
+        bTemp = bTab[(iFilterLen - 1) / 2];
+    else
+        bTemp = (bTab[iFilterLen / 2] + bTab[iFilterLen / 2 - 1]) / 2;
+    return bTemp;
+}
+
+float obtenerTDS(){
+    float resultado = analogRead(TdsSensorPin);
+    return resultado;
+}
+
+float ObtenerTurbidez(){
+    int sensorValue = analogRead(sensorPin);
+    int turbidity = map(sensorValue, 0,640, 100, 0);
+    Serial.print("Turbidez:");
+    Serial.print(turbidity);
+    Serial.println(" NTU");
+    //unidades nefelométricas de turbidez (NTU)
+    return turbidity;
+}
+
+float CalculoSalinidad(float tds){
+    float salinidad;
+    salinidad = (tds)/10;
+    Serial.print("Salinida Total");
+    Serial.println(salinidad,3);
+    return salinidad;
+}
+
+String ObtenerLluvia(){
+    lluvia = analogRead (4);
+    if (lluvia < 300)
+    {
+      LluviaS = "Intenso";
+    }
+    else if (lluvia < 500)
+    {
+      LluviaS = "Moderado";
+    }
+    else 
+    {
+      LluviaS = "No lluvia";  
+    }
+    return LluviaS;
+}
+
+String ObtenerNivel (){
+  nivel = analogRead (5);
+  if (nivel <=235)
+  {
+    NivelA = "/N.Normal";
+  }
+  else if (nivel >235 && nivel <= 470)
+  {
+    NivelA = "/N.Subió";
+  }
+  else 
+  {
+    NivelA = "/N.elevado";
+  }
+  return NivelA;
+}
